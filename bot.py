@@ -110,6 +110,16 @@ async def withdraw_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
+    
+    # Check if there is already a pending withdrawal
+    cursor.execute("SELECT id FROM withdrawals WHERE chat_id = ? AND status = 'Pending'", (chat_id,))
+    pending_request = cursor.fetchone()
+    
+    if pending_request:
+        conn.close()
+        await update.message.reply_text("⚠️ You already have a pending withdrawal request. Please wait for the admin to approve it.", reply_markup=get_main_menu())
+        return ConversationHandler.END
+
     cursor.execute("SELECT balance FROM users WHERE chat_id = ?", (chat_id,))
     res = cursor.fetchone()
     balance = res[0] if res else 0
@@ -118,6 +128,7 @@ async def withdraw_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if balance < 30:
         await update.message.reply_text("Minimum withdrawal limit is 30 RS.", reply_markup=get_main_menu())
         return ConversationHandler.END
+        
     await update.message.reply_text("Select your payment method:", reply_markup=ReplyKeyboardMarkup([["EasyPaisa", "JazzCash"], ["Cancel"]], resize_keyboard=True))
     return CHOOSE_METHOD
 
