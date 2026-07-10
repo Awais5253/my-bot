@@ -1,25 +1,30 @@
-from flask import Flask
-from threading import Thread
 import os
+import random
+import sqlite3
+from datetime import datetime, timedelta
+from threading import Thread
 
-app = Flask(__name__)
-
-@app.route('/')
-def home():
-    return "Bot is running!"
-
-def run():
-    port = int(os.environ.get("PORT", 8080))
-    app.run(host='0.0.0.0', port=port)
-
-Thread(target=run).start()
+from flask import Flask
+from faker import Faker
 from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler, ConversationHandler
-from faker import Faker
-import random
-from datetime import datetime, timedelta
-import sqlite3
 
+# ==========================================
+# 1. FLASK WEB SERVER SETUP
+# ==========================================
+flask_app = Flask(__name__)
+
+@flask_app.route('/')
+def home():
+    return "Bot is running live on Render!"
+
+def run_flask():
+    port = int(os.environ.get("PORT", 8080))
+    flask_app.run(host='0.0.0.0', port=port)
+
+# ==========================================
+# 2. TELEGRAM BOT SETUP
+# ==========================================
 TOKEN = "8906333193:AAG4bjuCEwAAttfdR9FXkZmzPyG_KmfUMrk"
 ADMIN_ID = 7208292353 
 fake = Faker()
@@ -374,8 +379,13 @@ async def button_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text(text=f"Task Rejected: {email}")
 
 def main():
+    # 1. वेब सर्वर को बैकग्राउंड में चलाएं
+    Thread(target=run_flask, daemon=True).start()
+    
+    # 2. डेटाबेस और टेलीग्राम बॉट शुरू करें
     init_db()
-    app = Application.builder().token(TOKEN).build()
+    application = Application.builder().token(TOKEN).build()
+    
     conv = ConversationHandler(
         entry_points=[MessageHandler(filters.Text(["Withdraw"]), withdraw_start)],
         states={
@@ -385,12 +395,14 @@ def main():
         },
         fallbacks=[CommandHandler("start", start)]
     )
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(conv)
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    app.add_handler(CallbackQueryHandler(button_query))
+    
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(conv)
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    application.add_handler(CallbackQueryHandler(button_query))
+    
     print("Bot is running...")
-    app.run_polling()
+    application.run_polling()
 
 if __name__ == '__main__':
     main()
