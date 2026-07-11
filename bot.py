@@ -29,8 +29,8 @@ TOKEN = "8906333193:AAG4bjuCEwAAttfdR9FXkZmzPyG_KmfUMrk"
 ADMIN_ID = 7208292353 
 fake = Faker()
 
-# Supabase PostgreSQL Database URL
-DB_URL = "postgresql://postgres:odiwbam8283!@db.delosdwrvnkptgfvdyud.supabase.co:5432/postgres"
+import os
+DB_URL = os.environ.get("DATABASE_URL")
 
 def init_db():
     conn = psycopg2.connect(DB_URL)
