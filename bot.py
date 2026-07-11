@@ -323,11 +323,13 @@ async def button_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn = psycopg2.connect(DB_URL)
     cursor = conn.cursor()
     
+    # Withdrawal logic - No Security Check here, as requested
     if data[0] == "wd":
         user_id, amount = int(data[1]), int(data[2])
         cursor.execute("UPDATE users SET balance = GREATEST(0, balance - %s) WHERE chat_id = %s", (amount, user_id))
         cursor.execute("UPDATE withdrawals SET status = 'Approved' WHERE chat_id = %s AND amount = %s AND status = 'Pending'", (user_id, amount))
         conn.commit()
+        conn.close()
         await context.bot.send_message(chat_id=user_id, text="Congratulations! Your withdrawal has been received. Please Check your Easypaisa/JazzCash account.")
         await query.edit_message_text(text="Withdrawal Approved and amount deducted.")
     
@@ -335,11 +337,20 @@ async def button_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id, amount = int(data[1]), int(data[2])
         cursor.execute("UPDATE withdrawals SET status = 'Rejected' WHERE chat_id = %s AND amount = %s AND status = 'Pending'", (user_id, amount))
         conn.commit()
+        conn.close()
         await context.bot.send_message(chat_id=user_id, text="Your withdrawal request has been rejected. Check your account number and try again.")
         await query.edit_message_text(text="Withdrawal Rejected.")
             
+    # Task approval logic - Security Check applied here
     elif data[0] in ["app", "rej"]:
         user_id, email, action = int(data[1]), data[2], data[0]
+        cursor.execute("SELECT status FROM accounts WHERE chat_id = %s AND email = %s", (user_id, email))
+        res = cursor.fetchone()
+        if not res or res[0] != 'Pending':
+            await query.answer("یہ ٹاسک پہلے ہی پروسیس ہو چکا ہے!")
+            conn.close()
+            return
+            
         if action == "app":
             cursor.execute("UPDATE accounts SET status = 'Approved' WHERE chat_id = %s AND email = %s", (user_id, email))
             cursor.execute("UPDATE users SET balance = balance + 30 WHERE chat_id = %s", (user_id,))
@@ -350,6 +361,7 @@ async def button_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 cursor.execute("UPDATE users SET balance = balance + 10 WHERE chat_id = %s", (referrer_id,))
                 cursor.execute("INSERT INTO referral_earnings (referrer_id, amount, date) VALUES (%s, %s, %s)", (referrer_id, 10, datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
             conn.commit()
+            conn.close()
             await context.bot.send_message(chat_id=user_id, text=f"Task {email} Approved! 30 RS added.")
             await query.edit_message_text(text=f"Task Approved: {email}")
             if referrer_id:
@@ -358,11 +370,9 @@ async def button_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             cursor.execute("UPDATE accounts SET status = 'Rejected' WHERE chat_id = %s AND email = %s", (user_id, email))
             conn.commit()
+            conn.close()
             await context.bot.send_message(chat_id=user_id, text=f"Task {email} Rejected.")
             await query.edit_message_text(text=f"Task Rejected: {email}")
-    
-    conn.close()
-    await query.answer()
 
 def main():
     Thread(target=run_flask, daemon=True).start()
