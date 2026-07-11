@@ -323,36 +323,23 @@ async def button_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn = psycopg2.connect(DB_URL)
     cursor = conn.cursor()
     
-    # سیکیورٹی چیک: چیک کریں کہ کیا ٹاسک پہلے سے پروسیس ہو چکا ہے
-    if data[0] == "wd" or data[0] == "wrej":
+    if data[0] == "wd":
         user_id, amount = int(data[1]), int(data[2])
-        cursor.execute("SELECT status FROM withdrawals WHERE chat_id = %s AND amount = %s AND status = 'Pending' ORDER BY id DESC LIMIT 1", (user_id, amount))
-        if not cursor.fetchone():
-            await query.answer("یہ ٹاسک پہلے ہی پروسیس ہو چکا ہے!")
-            conn.close()
-            return
-        
-        if data[0] == "wd":
-            cursor.execute("UPDATE users SET balance = GREATEST(0, balance - %s) WHERE chat_id = %s", (amount, user_id))
-            cursor.execute("UPDATE withdrawals SET status = 'Approved' WHERE chat_id = %s AND amount = %s AND status = 'Pending' ORDER BY id DESC LIMIT 1", (user_id, amount))
-            conn.commit()
-            await context.bot.send_message(chat_id=user_id, text="Congratulations! Your withdrawal has been received. Please Check your Easypaisa/JazzCash account.")
-            await query.edit_message_text(text="Withdrawal Approved and amount deducted.")
-        else:
-            cursor.execute("UPDATE withdrawals SET status = 'Rejected' WHERE chat_id = %s AND amount = %s AND status = 'Pending' ORDER BY id DESC LIMIT 1", (user_id, amount))
-            conn.commit()
-            await context.bot.send_message(chat_id=user_id, text="Your withdrawal request has been rejected. Check your account number and try again.")
-            await query.edit_message_text(text="Withdrawal Rejected.")
+        cursor.execute("UPDATE users SET balance = GREATEST(0, balance - %s) WHERE chat_id = %s", (amount, user_id))
+        cursor.execute("UPDATE withdrawals SET status = 'Approved' WHERE chat_id = %s AND amount = %s AND status = 'Pending'", (user_id, amount))
+        conn.commit()
+        await context.bot.send_message(chat_id=user_id, text="Congratulations! Your withdrawal has been received. Please Check your Easypaisa/JazzCash account.")
+        await query.edit_message_text(text="Withdrawal Approved and amount deducted.")
+    
+    elif data[0] == "wrej":
+        user_id, amount = int(data[1]), int(data[2])
+        cursor.execute("UPDATE withdrawals SET status = 'Rejected' WHERE chat_id = %s AND amount = %s AND status = 'Pending'", (user_id, amount))
+        conn.commit()
+        await context.bot.send_message(chat_id=user_id, text="Your withdrawal request has been rejected. Check your account number and try again.")
+        await query.edit_message_text(text="Withdrawal Rejected.")
             
     elif data[0] in ["app", "rej"]:
         user_id, email, action = int(data[1]), data[2], data[0]
-        cursor.execute("SELECT status FROM accounts WHERE chat_id = %s AND email = %s", (user_id, email))
-        res = cursor.fetchone()
-        if not res or res[0] != 'Pending':
-            await query.answer("یہ ٹاسک پہلے ہی پروسیس ہو چکا ہے!")
-            conn.close()
-            return
-            
         if action == "app":
             cursor.execute("UPDATE accounts SET status = 'Approved' WHERE chat_id = %s AND email = %s", (user_id, email))
             cursor.execute("UPDATE users SET balance = balance + 30 WHERE chat_id = %s", (user_id,))
