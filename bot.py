@@ -1,6 +1,6 @@
 import os
 import random
-import sqlite3
+import psycopg2
 from datetime import datetime, timedelta
 from threading import Thread
 
@@ -29,35 +29,36 @@ TOKEN = "8906333193:AAG4bjuCEwAAttfdR9FXkZmzPyG_KmfUMrk"
 ADMIN_ID = 7208292353 
 fake = Faker()
 
-DB_FILE = "bot_data.db"
+# Supabase PostgreSQL Database URL
+DB_URL = "postgresql://postgres:odiwbam8283!@db.delosdwrvnkptgfvdyud.supabase.co:5432/postgres"
 
 def init_db():
-    conn = sqlite3.connect(DB_FILE)
+    conn = psycopg2.connect(DB_URL)
     cursor = conn.cursor()
     cursor.execute('''CREATE TABLE IF NOT EXISTS users (
-        chat_id INTEGER PRIMARY KEY,
-        user_id INTEGER,
+        chat_id BIGINT PRIMARY KEY,
+        user_id BIGINT,
         balance INTEGER DEFAULT 0
     )''')
     cursor.execute('''CREATE TABLE IF NOT EXISTS accounts (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        chat_id INTEGER,
+        id SERIAL PRIMARY KEY,
+        chat_id BIGINT,
         email TEXT,
         status TEXT
     )''')
     cursor.execute('''CREATE TABLE IF NOT EXISTS referrals (
-        chat_id INTEGER PRIMARY KEY,
-        referrer_id INTEGER
+        chat_id BIGINT PRIMARY KEY,
+        referrer_id BIGINT
     )''')
     cursor.execute('''CREATE TABLE IF NOT EXISTS referral_earnings (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        referrer_id INTEGER,
+        id SERIAL PRIMARY KEY,
+        referrer_id BIGINT,
         amount INTEGER,
         date TEXT
     )''')
     cursor.execute('''CREATE TABLE IF NOT EXISTS withdrawals (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        chat_id INTEGER,
+        id SERIAL PRIMARY KEY,
+        chat_id BIGINT,
         amount INTEGER,
         method TEXT,
         status TEXT
@@ -79,23 +80,24 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if args and args[0].isdigit():
         referrer_id = int(args[0])
 
-    conn = sqlite3.connect(DB_FILE)
+    conn = psycopg2.connect(DB_URL)
     cursor = conn.cursor()
     
-    cursor.execute("SELECT user_id FROM users WHERE chat_id = ?", (chat_id,))
+    cursor.execute("SELECT user_id FROM users WHERE chat_id = %s", (chat_id,))
     user_exists = cursor.fetchone()
     
     if not user_exists:
         cursor.execute("SELECT MAX(user_id) FROM users")
-        max_id = cursor.fetchone()[0]
+        max_id_res = cursor.fetchone()
+        max_id = max_id_res[0] if max_id_res and max_id_res[0] is not None else None
         uid = max_id + 1 if max_id else 8866482000
         
-        cursor.execute("INSERT INTO users (chat_id, user_id, balance) VALUES (?, ?, ?)", (chat_id, uid, 0))
+        cursor.execute("INSERT INTO users (chat_id, user_id, balance) VALUES (%s, %s, %s)", (chat_id, uid, 0))
         
         if referrer_id and referrer_id != chat_id:
-            cursor.execute("SELECT chat_id FROM users WHERE chat_id = ?", (referrer_id,))
+            cursor.execute("SELECT chat_id FROM users WHERE chat_id = %s", (referrer_id,))
             if cursor.fetchone():
-                cursor.execute("INSERT OR IGNORE INTO referrals (chat_id, referrer_id) VALUES (?, ?)", (chat_id, referrer_id))
+                cursor.execute("INSERT INTO referrals (chat_id, referrer_id) VALUES (%s, %s) ON CONFLICT (chat_id) DO NOTHING", (chat_id, referrer_id))
     
     conn.commit()
     conn.close()
@@ -108,11 +110,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def withdraw_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     
-    conn = sqlite3.connect(DB_FILE)
+    conn = psycopg2.connect(DB_URL)
     cursor = conn.cursor()
     
     # Check if there is already a pending withdrawal
-    cursor.execute("SELECT id FROM withdrawals WHERE chat_id = ? AND status = 'Pending'", (chat_id,))
+    cursor.execute("SELECT id FROM withdrawals WHERE chat_id = %s AND status = 'Pending'", (chat_id,))
     pending_request = cursor.fetchone()
     
     if pending_request:
@@ -120,7 +122,7 @@ async def withdraw_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⚠️ You already have a pending withdrawal request. Please wait for the admin to approve it.", reply_markup=get_main_menu())
         return ConversationHandler.END
 
-    cursor.execute("SELECT balance FROM users WHERE chat_id = ?", (chat_id,))
+    cursor.execute("SELECT balance FROM users WHERE chat_id = %s", (chat_id,))
     res = cursor.fetchone()
     balance = res[0] if res else 0
     conn.close()
@@ -159,9 +161,9 @@ async def enter_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
         amount = int(update.message.text)
         chat_id = update.effective_chat.id
         
-        conn = sqlite3.connect(DB_FILE)
+        conn = psycopg2.connect(DB_URL)
         cursor = conn.cursor()
-        cursor.execute("SELECT balance, user_id FROM users WHERE chat_id = ?", (chat_id,))
+        cursor.execute("SELECT balance, user_id FROM users WHERE chat_id = %s", (chat_id,))
         res = cursor.fetchone()
         balance, uid = (res[0], res[1]) if res else (0, "N/A")
         
@@ -172,7 +174,7 @@ async def enter_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         context.user_data['amount'] = amount
         
-        cursor.execute("INSERT INTO withdrawals (chat_id, amount, method, status) VALUES (?, ?, ?, ?)", 
+        cursor.execute("INSERT INTO withdrawals (chat_id, amount, method, status) VALUES (%s, %s, %s, %s)", 
                        (chat_id, amount, context.user_data['method'], "Pending"))
         conn.commit()
         conn.close()
@@ -200,14 +202,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         bot_username = context.bot.username
         ref_link = f"https://t.me/{bot_username}?start={chat_id}"
         
-        conn = sqlite3.connect(DB_FILE)
+        conn = psycopg2.connect(DB_URL)
         cursor = conn.cursor()
         
-        cursor.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id = ?", (chat_id,))
+        cursor.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id = %s", (chat_id,))
         total_refs = cursor.fetchone()[0]
         
         thirty_days_ago = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d %H:%M:%S')
-        cursor.execute("SELECT SUM(amount) FROM referral_earnings WHERE referrer_id = ? AND date >= ?", (chat_id, thirty_days_ago))
+        cursor.execute("SELECT SUM(amount) FROM referral_earnings WHERE referrer_id = %s AND date >= %s", (chat_id, thirty_days_ago))
         earned_30d = cursor.fetchone()[0] or 0
         conn.close()
         
@@ -220,32 +222,32 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(msg, parse_mode="Markdown")
         
     elif text == "Profile":
-        conn = sqlite3.connect(DB_FILE)
+        conn = psycopg2.connect(DB_URL)
         cursor = conn.cursor()
-        cursor.execute("SELECT user_id FROM users WHERE chat_id = ?", (chat_id,))
+        cursor.execute("SELECT user_id FROM users WHERE chat_id = %s", (chat_id,))
         res = cursor.fetchone()
         uid = res[0] if res else chat_id
         conn.close()
         await update.message.reply_text(f"👤 Your profile:\n\n🆔 ID: {uid}\n👤 Name: {user.first_name}")
         
     elif text == "Balance":
-        conn = sqlite3.connect(DB_FILE)
+        conn = psycopg2.connect(DB_URL)
         cursor = conn.cursor()
-        cursor.execute("SELECT balance FROM users WHERE chat_id = ?", (chat_id,))
+        cursor.execute("SELECT balance FROM users WHERE chat_id = %s", (chat_id,))
         res = cursor.fetchone()
         bal = res[0] if res else 0
         conn.close()
         await update.message.reply_text(f"You have RS {bal} available balance.")
         
     elif text == "My accounts":
-        conn = sqlite3.connect(DB_FILE)
+        conn = psycopg2.connect(DB_URL)
         cursor = conn.cursor()
         
-        cursor.execute("SELECT email, status FROM accounts WHERE chat_id = ? ORDER BY id DESC LIMIT 6", (chat_id,))
+        cursor.execute("SELECT email, status FROM accounts WHERE chat_id = %s ORDER BY id DESC LIMIT 6", (chat_id,))
         accounts = cursor.fetchall()
         accounts.reverse()
         
-        cursor.execute("SELECT amount, method, status FROM withdrawals WHERE chat_id = ? ORDER BY id DESC LIMIT 6", (chat_id,))
+        cursor.execute("SELECT amount, method, status FROM withdrawals WHERE chat_id = %s ORDER BY id DESC LIMIT 6", (chat_id,))
         withdrawals = cursor.fetchall()
         withdrawals.reverse()
         conn.close()
@@ -270,7 +272,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         first, last = fake.first_name(), fake.last_name()
         email = f"{first.lower()}{last.lower()}{random.randint(10000000, 99999999)}@gmail.com"
         
-        conn = sqlite3.connect(DB_FILE)
+        conn = psycopg2.connect(DB_URL)
         cursor = conn.cursor()
         cursor.execute("SELECT COUNT(*) FROM accounts")
         total_accs = cursor.fetchone()[0]
@@ -297,10 +299,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if task_data:
             email = task_data['email']
             
-            conn = sqlite3.connect(DB_FILE)
+            conn = psycopg2.connect(DB_URL)
             cursor = conn.cursor()
-            cursor.execute("INSERT INTO accounts (chat_id, email, status) VALUES (?, ?, ?)", (chat_id, email, "Pending"))
-            cursor.execute("SELECT user_id FROM users WHERE chat_id = ?", (chat_id,))
+            cursor.execute("INSERT INTO accounts (chat_id, email, status) VALUES (%s, %s, %s)", (chat_id, email, "Pending"))
+            cursor.execute("SELECT user_id FROM users WHERE chat_id = %s", (chat_id,))
             res = cursor.fetchone()
             uid = res[0] if res else "N/A"
             conn.commit()
@@ -319,18 +321,18 @@ async def button_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data.split('_')
     await query.answer()
     
-    conn = sqlite3.connect(DB_FILE)
+    conn = psycopg2.connect(DB_URL)
     cursor = conn.cursor()
     
     if data[0] == "wd":
         user_id, amount = int(data[1]), int(data[2])
         
-        cursor.execute("UPDATE users SET balance = MAX(0, balance - ?) WHERE chat_id = ?", (amount, user_id))
+        cursor.execute("UPDATE users SET balance = GREATEST(0, balance - %s) WHERE chat_id = %s", (amount, user_id))
         
-        cursor.execute("SELECT id FROM withdrawals WHERE chat_id = ? AND amount = ? AND status = 'Pending' ORDER BY id DESC LIMIT 1", (user_id, amount))
+        cursor.execute("SELECT id FROM withdrawals WHERE chat_id = %s AND amount = %s AND status = 'Pending' ORDER BY id DESC LIMIT 1", (user_id, amount))
         wd_res = cursor.fetchone()
         if wd_res:
-            cursor.execute("UPDATE withdrawals SET status = 'Approved' WHERE id = ?", (wd_res[0],))
+            cursor.execute("UPDATE withdrawals SET status = 'Approved' WHERE id = %s", (wd_res[0],))
         
         conn.commit()
         conn.close()
@@ -341,10 +343,10 @@ async def button_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data[0] == "wrej":
         user_id, amount = int(data[1]), int(data[2])
         
-        cursor.execute("SELECT id FROM withdrawals WHERE chat_id = ? AND amount = ? AND status = 'Pending' ORDER BY id DESC LIMIT 1", (user_id, amount))
+        cursor.execute("SELECT id FROM withdrawals WHERE chat_id = %s AND amount = %s AND status = 'Pending' ORDER BY id DESC LIMIT 1", (user_id, amount))
         wd_res = cursor.fetchone()
         if wd_res:
-            cursor.execute("UPDATE withdrawals SET status = 'Rejected' WHERE id = ?", (wd_res[0],))
+            cursor.execute("UPDATE withdrawals SET status = 'Rejected' WHERE id = %s", (wd_res[0],))
         
         conn.commit()
         conn.close()
@@ -356,18 +358,19 @@ async def button_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id, email, action = int(data[1]), data[2], data[0]
         
         if action == "app":
-            cursor.execute("UPDATE accounts SET status = 'Approved' WHERE chat_id = ? AND email = ?", (user_id, email))
-            cursor.execute("UPDATE users SET balance = balance + 30 WHERE chat_id = ?", (user_id,))
+            cursor.execute("UPDATE accounts SET status = 'Approved' WHERE chat_id = %s AND email = %s", (user_id, email))
+            cursor.execute("UPDATE users SET balance = balance + 30 WHERE chat_id = %s", (user_id,))
             
-            cursor.execute("SELECT referrer_id FROM referrals WHERE chat_id = ?", (user_id,))
+            cursor.execute("SELECT referrer_id FROM referrals WHERE chat_id = %s", (user_id,))
             ref_res = cursor.fetchone()
             
             referrer_id = None
             if ref_res:
                 referrer_id = ref_res[0]
-                cursor.execute("UPDATE users SET balance = balance + 10 WHERE chat_id = ?", (referrer_id,))
-                cursor.execute("INSERT INTO referral_earnings (referrer_id, amount, date) VALUES (?, ?, ?)", 
-                               (referrer_id, 10, datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
+                if referrer_id:
+                    cursor.execute("UPDATE users SET balance = balance + 10 WHERE chat_id = %s", (referrer_id,))
+                    cursor.execute("INSERT INTO referral_earnings (referrer_id, amount, date) VALUES (%s, %s, %s)", 
+                                   (referrer_id, 10, datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
             
             conn.commit()
             conn.close()
@@ -382,7 +385,7 @@ async def button_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     pass
                     
         else:
-            cursor.execute("UPDATE accounts SET status = 'Rejected' WHERE chat_id = ? AND email = ?", (user_id, email))
+            cursor.execute("UPDATE accounts SET status = 'Rejected' WHERE chat_id = %s AND email = %s", (user_id, email))
             conn.commit()
             conn.close()
             
@@ -390,10 +393,8 @@ async def button_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text(text=f"Task Rejected: {email}")
 
 def main():
-    # 1. वेब सर्वर को बैकग्राउंड में चलाएं
     Thread(target=run_flask, daemon=True).start()
     
-    # 2. डेटाबेस और टेलीग्राम बॉट शुरू करें
     init_db()
     application = Application.builder().token(TOKEN).build()
     
