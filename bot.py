@@ -414,7 +414,13 @@ def main():
     application.add_handler(CallbackQueryHandler(button_query))
     
     print("Bot is running...")
-    application.run_polling()
+    while True:
+        try:
+            application.run_polling(drop_pending_updates=False)
+        except Exception as e:
+            print(f"Bot error: {e}. Restarting...")
+            import time
+            time.sleep(5)
 
 if __name__ == '__main__':
     main()
