@@ -319,82 +319,66 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def button_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     data = query.data.split('_')
-    await query.answer()
     
     conn = psycopg2.connect(DB_URL)
     cursor = conn.cursor()
     
-    if data[0] == "wd":
+    # سیکیورٹی چیک: چیک کریں کہ کیا ٹاسک پہلے سے پروسیس ہو چکا ہے
+    if data[0] == "wd" or data[0] == "wrej":
         user_id, amount = int(data[1]), int(data[2])
+        cursor.execute("SELECT status FROM withdrawals WHERE chat_id = %s AND amount = %s AND status = 'Pending' ORDER BY id DESC LIMIT 1", (user_id, amount))
+        if not cursor.fetchone():
+            await query.answer("یہ ٹاسک پہلے ہی پروسیس ہو چکا ہے!")
+            conn.close()
+            return
         
-        cursor.execute("UPDATE users SET balance = GREATEST(0, balance - %s) WHERE chat_id = %s", (amount, user_id))
-        
-        cursor.execute("SELECT id FROM withdrawals WHERE chat_id = %s AND amount = %s AND status = 'Pending' ORDER BY id DESC LIMIT 1", (user_id, amount))
-        wd_res = cursor.fetchone()
-        if wd_res:
-            cursor.execute("UPDATE withdrawals SET status = 'Approved' WHERE id = %s", (wd_res[0],))
-        
-        conn.commit()
-        conn.close()
-        
-        await context.bot.send_message(chat_id=user_id, text="Congratulations! Your withdrawal has been received. Please Check your Easypaisa/JazzCash account.")
-        await query.edit_message_text(text="Withdrawal Approved and amount deducted.")
-    
-    elif data[0] == "wrej":
-        user_id, amount = int(data[1]), int(data[2])
-        
-        cursor.execute("SELECT id FROM withdrawals WHERE chat_id = %s AND amount = %s AND status = 'Pending' ORDER BY id DESC LIMIT 1", (user_id, amount))
-        wd_res = cursor.fetchone()
-        if wd_res:
-            cursor.execute("UPDATE withdrawals SET status = 'Rejected' WHERE id = %s", (wd_res[0],))
-        
-        conn.commit()
-        conn.close()
-        
-        await context.bot.send_message(chat_id=user_id, text="Your withdrawal request has been rejected.Check your account number and try again.")
-        await query.edit_message_text(text="Withdrawal Rejected.")
-    
+        if data[0] == "wd":
+            cursor.execute("UPDATE users SET balance = GREATEST(0, balance - %s) WHERE chat_id = %s", (amount, user_id))
+            cursor.execute("UPDATE withdrawals SET status = 'Approved' WHERE chat_id = %s AND amount = %s AND status = 'Pending' ORDER BY id DESC LIMIT 1", (user_id, amount))
+            conn.commit()
+            await context.bot.send_message(chat_id=user_id, text="Congratulations! Your withdrawal has been received. Please Check your Easypaisa/JazzCash account.")
+            await query.edit_message_text(text="Withdrawal Approved and amount deducted.")
+        else:
+            cursor.execute("UPDATE withdrawals SET status = 'Rejected' WHERE chat_id = %s AND amount = %s AND status = 'Pending' ORDER BY id DESC LIMIT 1", (user_id, amount))
+            conn.commit()
+            await context.bot.send_message(chat_id=user_id, text="Your withdrawal request has been rejected. Check your account number and try again.")
+            await query.edit_message_text(text="Withdrawal Rejected.")
+            
     elif data[0] in ["app", "rej"]:
         user_id, email, action = int(data[1]), data[2], data[0]
-        
+        cursor.execute("SELECT status FROM accounts WHERE chat_id = %s AND email = %s", (user_id, email))
+        res = cursor.fetchone()
+        if not res or res[0] != 'Pending':
+            await query.answer("یہ ٹاسک پہلے ہی پروسیس ہو چکا ہے!")
+            conn.close()
+            return
+            
         if action == "app":
             cursor.execute("UPDATE accounts SET status = 'Approved' WHERE chat_id = %s AND email = %s", (user_id, email))
             cursor.execute("UPDATE users SET balance = balance + 30 WHERE chat_id = %s", (user_id,))
-            
             cursor.execute("SELECT referrer_id FROM referrals WHERE chat_id = %s", (user_id,))
             ref_res = cursor.fetchone()
-            
-            referrer_id = None
-            if ref_res:
-                referrer_id = ref_res[0]
-                if referrer_id:
-                    cursor.execute("UPDATE users SET balance = balance + 10 WHERE chat_id = %s", (referrer_id,))
-                    cursor.execute("INSERT INTO referral_earnings (referrer_id, amount, date) VALUES (%s, %s, %s)", 
-                                   (referrer_id, 10, datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
-            
+            referrer_id = ref_res[0] if ref_res else None
+            if referrer_id:
+                cursor.execute("UPDATE users SET balance = balance + 10 WHERE chat_id = %s", (referrer_id,))
+                cursor.execute("INSERT INTO referral_earnings (referrer_id, amount, date) VALUES (%s, %s, %s)", (referrer_id, 10, datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
             conn.commit()
-            conn.close()
-            
             await context.bot.send_message(chat_id=user_id, text=f"Task {email} Approved! 30 RS added.")
             await query.edit_message_text(text=f"Task Approved: {email}")
-            
             if referrer_id:
-                try:
-                    await context.bot.send_message(chat_id=referrer_id, text="🎉 Congratulations! Your referral's task was approved and you earned a 10 RS bonus!")
-                except:
-                    pass
-                    
+                try: await context.bot.send_message(chat_id=referrer_id, text="🎉 Congratulations! Your referral's task was approved and you earned a 10 RS bonus!")
+                except: pass
         else:
             cursor.execute("UPDATE accounts SET status = 'Rejected' WHERE chat_id = %s AND email = %s", (user_id, email))
             conn.commit()
-            conn.close()
-            
             await context.bot.send_message(chat_id=user_id, text=f"Task {email} Rejected.")
             await query.edit_message_text(text=f"Task Rejected: {email}")
+    
+    conn.close()
+    await query.answer()
 
 def main():
     Thread(target=run_flask, daemon=True).start()
-    
     init_db()
     application = Application.builder().token(TOKEN).build()
     
