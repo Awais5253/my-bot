@@ -1,3 +1,4 @@
 python-telegram-bot
 faker
 flask
+psycopg2-binary
