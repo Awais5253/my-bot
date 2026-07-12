@@ -247,12 +247,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         accounts = cursor.fetchall()
         accounts.reverse()
         
-        cursor.execute("SELECT amount, method, status FROM withdrawals WHERE chat_id = %s ORDER BY id DESC LIMIT 6", (chat_id,))
-        withdrawals = cursor.fetchall()
-        withdrawals.reverse()
+        cursor.execute("SELECT amount, method, status FROM withdrawals WHERE chat_id = %s ORDER BY id DESC LIMIT 1", (chat_id,))
+        last_withdrawal = cursor.fetchone()
         conn.close()
         
-        if not accounts and not withdrawals:
+        if not accounts and not last_withdrawal:
             await update.message.reply_text("You have no account or withdrawal history yet.")
         else:
             msg = ""
@@ -261,10 +260,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 for acc in accounts:
                     msg += f"Email: {acc[0]}\nStatus: {acc[1]}\n\n"
             
-            if withdrawals:
-                msg += "💸 Your Withdrawal History (Last 6):\n\n"
-                for wd in withdrawals:
-                    msg += f"Amount: {wd[0]} RS ({wd[1]})\nStatus: {wd[2]}\n\n"
+            if last_withdrawal:
+                msg += "💸 Your Latest Withdrawal:\n\n"
+                msg += f"Amount: {last_withdrawal[0]} RS ({last_withdrawal[1]})\nStatus: {last_withdrawal[2]}\n\n"
                     
             await update.message.reply_text(msg)
             
@@ -340,6 +338,15 @@ async def button_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
     elif data[0] in ["app", "rej"]:
         user_id, email, action = int(data[1]), data[2], data[0]
+        
+        cursor.execute("SELECT status FROM accounts WHERE chat_id = %s AND email = %s", (user_id, email))
+        account_status = cursor.fetchone()
+        
+        if not account_status or account_status[0] != "Pending":
+            await query.answer("This task is already processed!", show_alert=True)
+            conn.close()
+            return
+            
         if action == "app":
             cursor.execute("UPDATE accounts SET status = 'Approved' WHERE chat_id = %s AND email = %s", (user_id, email))
             cursor.execute("UPDATE users SET balance = balance + 30 WHERE chat_id = %s", (user_id,))
