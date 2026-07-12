@@ -247,12 +247,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         accounts = cursor.fetchall()
         accounts.reverse()
         
-        # یہاں ودڈراول ہسٹری کو صرف 1 کر دیا گیا ہے
-        cursor.execute("SELECT amount, method, status FROM withdrawals WHERE chat_id = %s ORDER BY id DESC LIMIT 1", (chat_id,))
-        last_withdrawal = cursor.fetchone()
+        cursor.execute("SELECT amount, method, status FROM withdrawals WHERE chat_id = %s ORDER BY id DESC LIMIT 6", (chat_id,))
+        withdrawals = cursor.fetchall()
+        withdrawals.reverse()
         conn.close()
         
-        if not accounts and not last_withdrawal:
+        if not accounts and not withdrawals:
             await update.message.reply_text("You have no account or withdrawal history yet.")
         else:
             msg = ""
@@ -261,9 +261,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 for acc in accounts:
                     msg += f"Email: {acc[0]}\nStatus: {acc[1]}\n\n"
             
-            if last_withdrawal:
-                msg += "💸 Your Latest Withdrawal:\n\n"
-                msg += f"Amount: {last_withdrawal[0]} RS ({last_withdrawal[1]})\nStatus: {last_withdrawal[2]}\n\n"
+            if withdrawals:
+                msg += "💸 Your Withdrawal History (Last 6):\n\n"
+                for wd in withdrawals:
+                    msg += f"Amount: {wd[0]} RS ({wd[1]})\nStatus: {wd[2]}\n\n"
                     
             await update.message.reply_text(msg)
             
